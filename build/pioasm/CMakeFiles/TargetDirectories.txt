@@ -1,0 +1,3 @@
+D:/Projects/VsCode/pico/WordOnTheAir/build/pioasm/CMakeFiles/pioasm.dir
+D:/Projects/VsCode/pico/WordOnTheAir/build/pioasm/CMakeFiles/edit_cache.dir
+D:/Projects/VsCode/pico/WordOnTheAir/build/pioasm/CMakeFiles/rebuild_cache.dir
