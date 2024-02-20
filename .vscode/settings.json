@@ -25,6 +25,7 @@
         "pin_def.h": "c",
         "stdint.h": "c",
         "cstdlib": "c",
-        "assert.h": "c"
+        "assert.h": "c",
+        "uart.h": "c"
     }
 }

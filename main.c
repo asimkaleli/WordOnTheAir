@@ -5,23 +5,28 @@
 #include "pico/binary_info.h"
 #include "pico/time.h"
 #include "hardware/uart.h"
+#include "hardware/irq.h"
 #include "pin_def.h"
 #include "ascii_lut.h"
 
-#define VERSION_MAJOR   1
-#define VERSION_MINOR   0
-#define VERSION_PATCH   0
+#define VERSION_MAJOR 1
+#define VERSION_MINOR 0
+#define VERSION_PATCH 0
 
 #define GET_MS us_to_ms(get_absolute_time()._private_us_since_boot)
 
 static void led_set_array(uint8_t arr, LED_Color_te color);
 static uint8_t reverse(uint8_t b);
+static int leftShift(char *words, int len);
 
 static uint8_t uart_rx_buffer[50] = "MEKAN";
 static uint8_t screenStr[50];
 static LED_Color_te colorLED = LED_RED;
 static uint32_t last_received_ms;
-static uint16_t waitTimeUs = 250;
+static uint16_t waitTimeUs = 275;
+
+static uint64_t flowing_time;
+static bool flowing_enable = false;
 
 // RX interrupt handler
 void on_uart_rx()
@@ -59,6 +64,7 @@ int main()
     // Select correct interrupt for the UART we are using
     int UART_IRQ = UART_ID == uart0 ? UART0_IRQ : UART1_IRQ;
 
+    irq_set_priority(UART_IRQ, 0x10);
     // And set up and enable the interrupt handlers
     irq_set_exclusive_handler(UART_IRQ, on_uart_rx);
     irq_set_enabled(UART_IRQ, true);
@@ -140,168 +146,307 @@ int main()
 
     while (true)
     {
-        if (!strcmp(uart_rx_buffer, "RENK=KIRMIZI"))
+        if ((100 < GET_MS - last_received_ms))
         {
-            memset(uart_rx_buffer, 0, sizeof(uart_rx_buffer));
-            colorLED = LED_RED;
-        }
-        else if (!strcmp(uart_rx_buffer, "RENK=YESIL"))
-        {
-            memset(uart_rx_buffer, 0, sizeof(uart_rx_buffer));
-            colorLED = LED_GREEN;
-        }
-        else if (!strcmp(uart_rx_buffer, "RENK=MAVI"))
-        {
-            memset(uart_rx_buffer, 0, sizeof(uart_rx_buffer));
-            colorLED = LED_BLUE;
-        }
-        else if (!strcmp(uart_rx_buffer, "HARF GENISLIK="))
-        {
-            sleep_ms(10); //ilginç bir şekilde data kaçıyor.
-            waitTimeUs = atoi(&uart_rx_buffer[14]);
-            memset(uart_rx_buffer, 0, sizeof(uart_rx_buffer));
-        }
-
-        if (!gpio_get(HAL_INPUT_PIN))
-        {
-            if(uart_rx_buffer[0] != 0)
+            if (strstr(uart_rx_buffer, "LED="))
             {
-                memcpy(screenStr, uart_rx_buffer, sizeof(uart_rx_buffer));
+                colorLED = (LED_Color_te)atoi(&uart_rx_buffer[4]);
+                memset(uart_rx_buffer, 0, sizeof(uart_rx_buffer));
             }
-            
-            for (uint8_t char_index = 0; char_index < strlen(screenStr); char_index++)
+            else if (strstr(uart_rx_buffer, "KAYMA=") != NULL)
             {
-                for (uint32_t char_len = 0; char_len < CHR_LEN; char_len++)
+                flowing_enable = (bool)atoi(&uart_rx_buffer[6]);
+                memset(uart_rx_buffer, 0, sizeof(uart_rx_buffer));
+            }
+            else if (strstr(uart_rx_buffer, "HARF GENISLIK=") != NULL)
+            {
+                waitTimeUs = atoi(&uart_rx_buffer[14]);
+                memset(uart_rx_buffer, 0, sizeof(uart_rx_buffer));
+            }
+
+            if (!gpio_get(HAL_INPUT_PIN))
+            {
+                if (uart_rx_buffer[0] != 0)
                 {
-                    led_set_array(reverse(ascii_lut[(screenStr[char_index])][char_len]), colorLED);
-                    sleep_us(waitTimeUs);
+                    memset(screenStr, 0, sizeof(screenStr));
+                    memcpy(screenStr, uart_rx_buffer, sizeof(uart_rx_buffer));
+                    memset(uart_rx_buffer, 0, sizeof(uart_rx_buffer));
+                }
+
+                for (uint8_t char_index = 0; char_index < strlen(screenStr); char_index++)
+                {
+                    for (uint32_t char_len = 0; char_len < CHR_LEN; char_len++)
+                    {
+                        led_set_array(reverse(ascii_lut[(screenStr[char_index])][char_len]), colorLED);
+                        sleep_us(waitTimeUs);
+                    }
                 }
             }
-        }
-        else
-        {
-            led_set_array(0x00, LED_RED);
-            led_set_array(0x00, LED_GREEN);
-            led_set_array(0x00, LED_BLUE);
+            else
+            {
+                led_set_array(0x00, LED_ALL);
+            }
+
+            if (flowing_enable == true && GET_MS - flowing_time >= 1000)
+            {
+                flowing_time = GET_MS;
+                if (screenStr != NULL)
+                {
+                    leftShift(screenStr, strlen(screenStr));
+                }
+            }
         }
     }
 }
 
 void led_set_array(uint8_t arr, LED_Color_te color)
 {
-    uint led1;
-    uint led2;
-    uint led3;
-    uint led4;
-    uint led5;
-    uint led6;
-    uint led7;
-    uint led8;
+    uint led1[LED_COLOR_CNT] = {0};
+    uint led2[LED_COLOR_CNT] = {0};
+    uint led3[LED_COLOR_CNT] = {0};
+    uint led4[LED_COLOR_CNT] = {0};
+    uint led5[LED_COLOR_CNT] = {0};
+    uint led6[LED_COLOR_CNT] = {0};
+    uint led7[LED_COLOR_CNT] = {0};
+    uint led8[LED_COLOR_CNT] = {0};
 
     switch (color)
     {
     case LED_RED:
-        led1 = LED_1_R;
-        led2 = LED_2_R;
-        led3 = LED_3_R;
-        led4 = LED_4_R;
-        led5 = LED_5_R;
-        led6 = LED_6_R;
-        led7 = LED_7_R;
-        led8 = LED_8_R;
+        led1[RED_INDEX] = LED_1_R;
+        led2[RED_INDEX] = LED_2_R;
+        led3[RED_INDEX] = LED_3_R;
+        led4[RED_INDEX] = LED_4_R;
+        led5[RED_INDEX] = LED_5_R;
+        led6[RED_INDEX] = LED_6_R;
+        led7[RED_INDEX] = LED_7_R;
+        led8[RED_INDEX] = LED_8_R;
         break;
     case LED_GREEN:
-        led1 = LED_1_G;
-        led2 = LED_2_G;
-        led3 = LED_3_G;
-        led4 = LED_4_G;
-        led5 = LED_5_G;
-        led6 = LED_6_G;
-        led7 = LED_7_G;
-        led8 = LED_8_G;
+        led1[GREEN_INDEX] = LED_1_G;
+        led2[GREEN_INDEX] = LED_2_G;
+        led3[GREEN_INDEX] = LED_3_G;
+        led4[GREEN_INDEX] = LED_4_G;
+        led5[GREEN_INDEX] = LED_5_G;
+        led6[GREEN_INDEX] = LED_6_G;
+        led7[GREEN_INDEX] = LED_7_G;
+        led8[GREEN_INDEX] = LED_8_G;
         break;
     case LED_BLUE:
-        led1 = LED_1_B;
-        led2 = LED_2_B;
-        led3 = LED_3_B;
-        led4 = LED_4_B;
-        led5 = LED_5_B;
-        led6 = LED_6_B;
-        led7 = LED_7_B;
-        led8 = LED_8_B;
+        led1[BLUE_INDEX] = LED_1_B;
+        led2[BLUE_INDEX] = LED_2_B;
+        led3[BLUE_INDEX] = LED_3_B;
+        led4[BLUE_INDEX] = LED_4_B;
+        led5[BLUE_INDEX] = LED_5_B;
+        led6[BLUE_INDEX] = LED_6_B;
+        led7[BLUE_INDEX] = LED_7_B;
+        led8[BLUE_INDEX] = LED_8_B;
+        break;
+
+    case LED_YELLOW:
+        led1[RED_INDEX] = LED_1_R;
+        led2[RED_INDEX] = LED_2_R;
+        led3[RED_INDEX] = LED_3_R;
+        led4[RED_INDEX] = LED_4_R;
+        led5[RED_INDEX] = LED_5_R;
+        led6[RED_INDEX] = LED_6_R;
+        led7[RED_INDEX] = LED_7_R;
+        led8[RED_INDEX] = LED_8_R;
+        led1[GREEN_INDEX] = LED_1_G;
+        led2[GREEN_INDEX] = LED_2_G;
+        led3[GREEN_INDEX] = LED_3_G;
+        led4[GREEN_INDEX] = LED_4_G;
+        led5[GREEN_INDEX] = LED_5_G;
+        led6[GREEN_INDEX] = LED_6_G;
+        led7[GREEN_INDEX] = LED_7_G;
+        led8[GREEN_INDEX] = LED_8_G;
+        break;
+
+    case LED_PINK:
+        led1[RED_INDEX] = LED_1_R;
+        led2[RED_INDEX] = LED_2_R;
+        led3[RED_INDEX] = LED_3_R;
+        led4[RED_INDEX] = LED_4_R;
+        led5[RED_INDEX] = LED_5_R;
+        led6[RED_INDEX] = LED_6_R;
+        led7[RED_INDEX] = LED_7_R;
+        led8[RED_INDEX] = LED_8_R;
+        led1[BLUE_INDEX] = LED_1_B;
+        led2[BLUE_INDEX] = LED_2_B;
+        led3[BLUE_INDEX] = LED_3_B;
+        led4[BLUE_INDEX] = LED_4_B;
+        led5[BLUE_INDEX] = LED_5_B;
+        led6[BLUE_INDEX] = LED_6_B;
+        led7[BLUE_INDEX] = LED_7_B;
+        led8[BLUE_INDEX] = LED_8_B;
+        break;
+
+    case LED_TURQUOISE:
+        led1[BLUE_INDEX] = LED_1_B;
+        led2[BLUE_INDEX] = LED_2_B;
+        led3[BLUE_INDEX] = LED_3_B;
+        led4[BLUE_INDEX] = LED_4_B;
+        led5[BLUE_INDEX] = LED_5_B;
+        led6[BLUE_INDEX] = LED_6_B;
+        led7[BLUE_INDEX] = LED_7_B;
+        led8[BLUE_INDEX] = LED_8_B;
+        led1[GREEN_INDEX] = LED_1_G;
+        led2[GREEN_INDEX] = LED_2_G;
+        led3[GREEN_INDEX] = LED_3_G;
+        led4[GREEN_INDEX] = LED_4_G;
+        led5[GREEN_INDEX] = LED_5_G;
+        led6[GREEN_INDEX] = LED_6_G;
+        led7[GREEN_INDEX] = LED_7_G;
+        led8[GREEN_INDEX] = LED_8_G;
+        break;
+
+    case LED_WHITE:
+        led1[RED_INDEX] = LED_1_R;
+        led2[RED_INDEX] = LED_2_R;
+        led3[RED_INDEX] = LED_3_R;
+        led4[RED_INDEX] = LED_4_R;
+        led5[RED_INDEX] = LED_5_R;
+        led6[RED_INDEX] = LED_6_R;
+        led7[RED_INDEX] = LED_7_R;
+        led8[RED_INDEX] = LED_8_R;
+        led1[GREEN_INDEX] = LED_1_G;
+        led2[GREEN_INDEX] = LED_2_G;
+        led3[GREEN_INDEX] = LED_3_G;
+        led4[GREEN_INDEX] = LED_4_G;
+        led5[GREEN_INDEX] = LED_5_G;
+        led6[GREEN_INDEX] = LED_6_G;
+        led7[GREEN_INDEX] = LED_7_G;
+        led8[GREEN_INDEX] = LED_8_G;
+        led1[BLUE_INDEX] = LED_1_B;
+        led2[BLUE_INDEX] = LED_2_B;
+        led3[BLUE_INDEX] = LED_3_B;
+        led4[BLUE_INDEX] = LED_4_B;
+        led5[BLUE_INDEX] = LED_5_B;
+        led6[BLUE_INDEX] = LED_6_B;
+        led7[BLUE_INDEX] = LED_7_B;
+        led8[BLUE_INDEX] = LED_8_B;
+
         break;
     }
 
     if (arr & 0x01)
     {
-        gpio_put(led1, 1);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led1[i], (led1[i] != 0 ? 1 : 0));
+        }
     }
     else
     {
-        gpio_put(led1, 0);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led1[i], 0);
+        }
     }
 
     if (arr & 0x02)
     {
-        gpio_put(led2, 1);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led2[i], (led1[i] != 0 ? 1 : 0));
+        }
     }
     else
     {
-        gpio_put(led2, 0);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led2[i], 0);
+        }
     }
 
     if (arr & 0x04)
     {
-        gpio_put(led3, 1);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led3[i], (led1[i] != 0 ? 1 : 0));
+        }
     }
     else
     {
-        gpio_put(led3, 0);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led3[i], 0);
+        }
     }
 
     if (arr & 0x08)
     {
-        gpio_put(led4, 1);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led4[i], (led1[i] != 0 ? 1 : 0));
+        }
     }
     else
     {
-        gpio_put(led4, 0);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led4[i], 0);
+        }
     }
 
     if (arr & 0x10)
     {
-        gpio_put(led5, 1);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led5[i], (led1[i] != 0 ? 1 : 0));
+        }
     }
     else
     {
-        gpio_put(led5, 0);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led5[i], 0);
+        }
     }
 
     if (arr & 0x20)
     {
-        gpio_put(led6, 1);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led6[i], (led1[i] != 0 ? 1 : 0));
+        }
     }
     else
     {
-        gpio_put(led6, 0);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led6[i], 0);
+        }
     }
 
     if (arr & 0x40)
     {
-        gpio_put(led7, 1);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led7[i], (led1[i] != 0 ? 1 : 0));
+        }
     }
     else
     {
-        gpio_put(led7, 0);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led7[i], 0);
+        }
     }
 
     if (arr & 0x80)
     {
-        gpio_put(led8, 1);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led8[i], (led1[i] != 0 ? 1 : 0));
+        }
     }
     else
     {
-        gpio_put(led8, 0);
+        for (uint8_t i = 0; i < LED_COLOR_CNT; i++)
+        {
+            gpio_put(led8[i], 0);
+        }
     }
 }
 
@@ -311,4 +456,19 @@ uint8_t reverse(uint8_t b)
     b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
     b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
     return b;
+}
+
+static int leftShift(char *const words, int len)
+{
+    if (len == 0)
+        return -1;
+
+    int i;
+    for (i = 1; i < len; i++)
+    {
+        words[i - 1] = words[i];
+    }
+    words[len - 1] = 0;
+    len--;
+    return len;
 }
